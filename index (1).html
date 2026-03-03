@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Jumping Ball Runner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      overflow: hidden;
+      background: #1a1a2e;
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    #gameWrapper {
+      position: relative;
+      width: 800px;
+      height: 400px;
+    }
+    #gameCanvas {
+      display: block;
+      border-radius: 18px;
+      box-shadow: 0 0 60px rgba(109,213,250,0.4);
+    }
+    #ui {
+      position: absolute;
+      top: 14px;
+      left: 20px;
+      color: #fff;
+      font-size: 20px;
+      font-weight: bold;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      pointer-events: none;
+      z-index: 10;
+    }
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10,10,30,0.82);
+      border-radius: 18px;
+      z-index: 20;
+      gap: 14px;
+    }
+    #overlay h1 {
+      font-size: 44px;
+      color: #fff;
+      font-weight: bold;
+      text-shadow: 0 0 30px #6dd5fa;
+    }
+    #overlay p { font-size: 16px; color: #cce7ff; }
+    .scoreDisplay {
+      font-size: 26px;
+      color: #ffcc00;
+      font-weight: bold;
+      text-shadow: 0 0 16px #ffcc0088;
+    }
+    .btn {
+      padding: 14px 44px;
+      font-size: 20px;
+      font-weight: bold;
+      background: linear-gradient(135deg, #ffcc00, #ff9900);
+      color: #1a1a2e;
+      border: none;
+      border-radius: 50px;
+      cursor: pointer;
+      box-shadow: 0 6px 24px rgba(255,180,0,0.5);
+      transition: transform 0.1s;
+    }
+    .btn:hover { transform: scale(1.06); }
+  </style>
+</head>
+<body>
+<div id="gameWrapper">
+  <canvas id="gameCanvas" width="800" height="400"></canvas>
+  <div id="ui">Score: <span id="scoreVal">0</span> &nbsp;|&nbsp; Best: <span id="highVal">0</span></div>
+  <div id="overlay">
+    <h1>&#x26BD; Ball Runner</h1>
+    <p>Jump over obstacles and survive!</p>
+    <p>Press <b>Space / &uarr;</b> or Tap to jump &mdash; Double jump allowed!</p>
+    <button class="btn" id="actionBtn">PLAY</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  var canvas = document.getElementById('gameCanvas');
+  var ctx = canvas.getContext('2d');
+  var scoreEl = document.getElementById('scoreVal');
+  var highEl = document.getElementById('highVal');
+  var overlay = document.getElementById('overlay');
+
+  var W = 800, H = 400;
+  var GROUND = H - 60;
+  var GRAVITY = 0.6;
+  var JUMP_FORCE = -14;
+  var BALL_R = 22;
+  var BALL_X = 100;
+
+  var ball, obstacles, particles, score, highScore, speed, frameCount, gameRunning, spawnTimer, animId;
+  highScore = 0;
+
+  function skyColor(s) {
+    s = (typeof s === 'number' && isFinite(s)) ? s : 0;
+    var t = Math.min(s / 500, 1);
+    var r = Math.round(30 + t * 80);
+    var g = Math.round(80 + t * 20);
+    var b = Math.round(180 - t * 100);
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  function initGame() {
+    ball = { x: BALL_X, y: GROUND - BALL_R, vy: 0, onGround: true, jumps: 0, trail: [] };
+    obstacles = [];
+    particles = [];
+    score = 0;
+    speed = 4;
+    frameCount = 0;
+    spawnTimer = 0;
+    gameRunning = true;
+  }
+
+  function jump() {
+    if (!gameRunning) return;
+    if (ball.jumps < 2) {
+      ball.vy = JUMP_FORCE;
+      ball.onGround = false;
+      ball.jumps++;
+      for (var i = 0; i < 10; i++) {
+        particles.push({
+          x: ball.x, y: ball.y + BALL_R,
+          vx: (Math.random() - 0.5) * 4,
+          vy: Math.random() * 3 + 1,
+          alpha: 1, r: Math.random() * 5 + 2,
+          hue: Math.round(180 + Math.random() * 60)
+        });
+      }
+    }
+  }
+
+  function spawnObstacle() {
+    var r = Math.random();
+    if (r < 0.5) {
+      obstacles.push({ x: W + 20, w: 24, h: 50 + Math.random() * 30, color: '#27ae60', color2: '#1e8449' });
+    } else if (r < 0.8) {
+      obstacles.push({ x: W + 20, w: 20, h: 65, color: '#27ae60', color2: '#1e8449' });
+      obstacles.push({ x: W + 65, w: 20, h: 40, color: '#27ae60', color2: '#1e8449' });
+    } else {
+      obstacles.push({ x: W + 20, w: 55, h: 28, color: '#e74c3c', color2: '#c0392b' });
+    }
+  }
+
+  function checkCollision(obs) {
+    return (ball.x + BALL_R - 5) > obs.x &&
+           (ball.x - BALL_R + 5) < (obs.x + obs.w) &&
+           (ball.y + BALL_R - 5) > (GROUND - obs.h) &&
+           (ball.y - BALL_R + 5) < GROUND;
+  }
+
+  function drawBackground() {
+    var grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, skyColor(score));
+    grad.addColorStop(1, '#d0eeff');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    var clouds = [[80, 55], [280, 38], [520, 62], [690, 45]];
+    clouds.forEach(function (pos) {
+      var cx = ((pos[0] - frameCount * 0.25) % W + W) % W;
+      var cy = pos[1];
+      ctx.beginPath();
+      ctx.arc(cx, cy, 26, 0, Math.PI * 2);
+      ctx.arc(cx + 28, cy - 10, 20, 0, Math.PI * 2);
+      ctx.arc(cx + 52, cy, 24, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  function drawGround() {
+    var gGrad = ctx.createLinearGradient(0, GROUND, 0, H);
+    gGrad.addColorStop(0, '#4caf76');
+    gGrad.addColorStop(0.2, '#388e57');
+    gGrad.addColorStop(1, '#2d6e42');
+    ctx.fillStyle = gGrad;
+    ctx.fillRect(0, GROUND, W, H - GROUND);
+    ctx.strokeStyle = '#2d6e42';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND);
+    ctx.lineTo(W, GROUND);
+    ctx.stroke();
+  }
+
+  function drawBall() {
+    ball.trail.forEach(function (t, i) {
+      ctx.globalAlpha = Math.max(0, t.a);
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, BALL_R * 0.6 * ((i + 1) / ball.trail.length), 0, Math.PI * 2);
+      ctx.fillStyle = '#6dd5fa';
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.beginPath();
+    ctx.ellipse(ball.x, GROUND + 6, BALL_R * 0.8, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    var bGrad = ctx.createRadialGradient(ball.x - 6, ball.y - 6, 2, ball.x, ball.y, BALL_R);
+    bGrad.addColorStop(0, '#ffffff');
+    bGrad.addColorStop(0.4, '#6dd5fa');
+    bGrad.addColorStop(1, '#1565c0');
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
+    ctx.fillStyle = bGrad;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(ball.x - 7, ball.y - 7, 6, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fill();
+  }
+
+  function drawObstacles() {
+    obstacles.forEach(function (obs) {
+      var top = GROUND - obs.h;
+      var og = ctx.createLinearGradient(obs.x, top, obs.x + obs.w, top);
+      og.addColorStop(0, obs.color);
+      og.addColorStop(1, obs.color2);
+      ctx.fillStyle = og;
+      ctx.beginPath();
+      ctx.roundRect(obs.x, top, obs.w, obs.h, 6);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(obs.x + 5, top + 6);
+      ctx.lineTo(obs.x + 5, top + obs.h - 6);
+      ctx.stroke();
+    });
+  }
+
+  function drawParticles() {
+    particles.forEach(function (p) {
+      ctx.globalAlpha = Math.max(0, p.alpha);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = 'hsl(' + p.hue + ',90%,65%)';
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  function gameOver() {
+    gameRunning = false;
+    if (score > highScore) highScore = score;
+    highEl.textContent = highScore;
+
+    for (var i = 0; i < 30; i++) {
+      particles.push({
+        x: ball.x, y: ball.y,
+        vx: (Math.random() - 0.5) * 10,
+        vy: (Math.random() - 0.5) * 10,
+        alpha: 1, r: Math.random() * 8 + 3,
+        hue: Math.round(Math.random() * 40)
+      });
+    }
+
+    overlay.innerHTML =
+      '<h1>&#x1F4A5; Game Over!</h1>' +
+      '<div class="scoreDisplay">Score: ' + score + '</div>' +
+      '<p style="color:#aad4ee">Best: ' + highScore + '</p>' +
+      '<button class="btn" id="actionBtn">TRY AGAIN</button>';
+    overlay.style.display = 'flex';
+    document.getElementById('actionBtn').addEventListener('click', startGame);
+  }
+
+  function update() {
+    frameCount++;
+    score++;
+    scoreEl.textContent = score;
+    speed = 4 + Math.floor(score / 200) * 0.5;
+
+    ball.trail.push({ x: ball.x, y: ball.y, a: 0.35 });
+    if (ball.trail.length > 8) ball.trail.shift();
+    ball.trail.forEach(function (t) { t.a -= 0.04; });
+
+    ball.vy += GRAVITY;
+    ball.y += ball.vy;
+    if (ball.y >= GROUND - BALL_R) {
+      ball.y = GROUND - BALL_R;
+      ball.vy = 0;
+      ball.onGround = true;
+      ball.jumps = 0;
+    }
+
+    spawnTimer++;
+    var gap = Math.max(55, 130 - Math.floor(score / 40));
+    if (spawnTimer >= gap) { spawnObstacle(); spawnTimer = 0; }
+
+    for (var i = obstacles.length - 1; i >= 0; i--) {
+      obstacles[i].x -= speed;
+      if (obstacles[i].x + obstacles[i].w < 0) { obstacles.splice(i, 1); continue; }
+      if (checkCollision(obstacles[i])) { gameOver(); return; }
+    }
+
+    for (var j = particles.length - 1; j >= 0; j--) {
+      var p = particles[j];
+      p.x += p.vx; p.y += p.vy; p.alpha -= 0.03;
+      if (p.alpha <= 0) particles.splice(j, 1);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawBackground();
+    drawGround();
+    drawParticles();
+    drawObstacles();
+    drawBall();
+  }
+
+  function loop() {
+    if (!gameRunning) { draw(); return; }
+    update();
+    draw();
+    animId = requestAnimationFrame(loop);
+  }
+
+  function startGame() {
+    overlay.style.display = 'none';
+    cancelAnimationFrame(animId);
+    initGame();
+    loop();
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
+  });
+  canvas.addEventListener('touchstart', function (e) { e.preventDefault(); jump(); }, { passive: false });
+  canvas.addEventListener('mousedown', jump);
+  document.getElementById('actionBtn').addEventListener('click', startGame);
+
+  // Draw static start screen
+  score = 0;
+  frameCount = 0;
+  (function () {
+    var grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, skyColor(0));
+    grad.addColorStop(1, '#d0eeff');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+    var gGrad = ctx.createLinearGradient(0, GROUND, 0, H);
+    gGrad.addColorStop(0, '#4caf76');
+    gGrad.addColorStop(1, '#2d6e42');
+    ctx.fillStyle = gGrad;
+    ctx.fillRect(0, GROUND, W, H - GROUND);
+  })();
+
+})();
+</script>
+</body>
+</html>
