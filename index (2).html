@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Jumping Ball Runner</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  overflow:hidden;
+  background:#1a1a2e;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+  font-family:'Segoe UI',sans-serif;
+}
+#gameWrapper { position:relative; width:800px; height:400px; }
+#gameCanvas {
+  display:block;
+  border-radius:16px;
+  box-shadow:0 0 60px rgba(109,213,250,0.4);
+}
+#ui {
+  position:absolute;
+  top:14px; left:20px;
+  color:#fff;
+  font-size:18px;
+  font-weight:bold;
+  text-shadow:0 2px 8px rgba(0,0,0,0.4);
+  pointer-events:none;
+  z-index:10;
+  line-height:1.6;
+}
+#playerTag {
+  position:absolute;
+  top:14px; right:20px;
+  color:#ffcc00;
+  font-size:17px;
+  font-weight:bold;
+  text-shadow:0 2px 8px rgba(0,0,0,0.5);
+  pointer-events:none;
+  z-index:10;
+}
+#overlay {
+  position:absolute;
+  inset:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  background:rgba(10,10,30,0.88);
+  border-radius:16px;
+  z-index:20;
+  gap:12px;
+}
+#overlay h1 {
+  font-size:44px;
+  color:#fff;
+  text-shadow:0 0 30px #6dd5fa;
+  letter-spacing:2px;
+}
+#overlay p  { font-size:16px; color:#cce7ff; }
+.final-score { font-size:28px; color:#ffcc00; font-weight:bold; }
+.best-score  { font-size:18px; color:#aaffcc; font-weight:bold; }
+.player-name-label {
+  font-size:15px;
+  color:#aac8e0;
+  align-self:center;
+}
+#nameInput {
+  padding:10px 18px;
+  font-size:18px;
+  border-radius:30px;
+  border:2px solid #6dd5fa;
+  background:rgba(255,255,255,0.1);
+  color:#fff;
+  outline:none;
+  text-align:center;
+  width:220px;
+  letter-spacing:1px;
+}
+#nameInput::placeholder { color:#88aacc; }
+#nameInput:focus { border-color:#ffcc00; background:rgba(255,255,255,0.15); }
+.btn {
+  padding:13px 42px;
+  font-size:20px;
+  font-weight:bold;
+  background:linear-gradient(135deg,#ffcc00,#ff9900);
+  color:#1a1a2e;
+  border:none;
+  border-radius:50px;
+  cursor:pointer;
+  box-shadow:0 6px 24px rgba(255,180,0,0.5);
+  transition:transform 0.1s;
+  margin-top:4px;
+}
+.btn:hover { transform:scale(1.06); }
+.score-table {
+  background:rgba(255,255,255,0.07);
+  border-radius:12px;
+  padding:10px 24px;
+  min-width:260px;
+  text-align:center;
+}
+.score-table-title {
+  font-size:13px;
+  color:#88aacc;
+  text-transform:uppercase;
+  letter-spacing:2px;
+  margin-bottom:6px;
+}
+.score-row {
+  display:flex;
+  justify-content:space-between;
+  font-size:15px;
+  color:#ddeeff;
+  padding:3px 0;
+  border-bottom:1px solid rgba(255,255,255,0.07);
+}
+.score-row:last-child { border-bottom:none; }
+.score-row .rank { color:#ffcc00; font-weight:bold; width:24px; }
+.score-row .sname { flex:1; text-align:left; padding-left:6px; }
+.score-row .sval { color:#aaffcc; font-weight:bold; }
+</style>
+</head>
+<body>
+<div id="gameWrapper">
+  <canvas id="gameCanvas" width="800" height="400"></canvas>
+  <div id="ui">
+    Score: <span id="scoreVal">0</span><br>
+    Best: <span id="highVal">0</span>
+  </div>
+  <div id="playerTag">&#128100; <span id="playerNameTag">Player</span></div>
+  <div id="overlay">
+    <h1>&#9917; Ball Runner</h1>
+    <p>Jump over obstacles — survive as long as you can!</p>
+    <p class="player-name-label">Enter your name to begin</p>
+    <input type="text" id="nameInput" maxlength="16" placeholder="Your name..." autocomplete="off"/>
+    <p style="font-size:13px;color:#88aacc;">Space / Up Arrow / Tap to jump &nbsp;|&nbsp; Double jump allowed</p>
+    <button class="btn" id="actionBtn">PLAY</button>
+  </div>
+</div>
+<script>
+(function(){
+  var canvas  = document.getElementById('gameCanvas');
+  var ctx     = canvas.getContext('2d');
+  var scoreEl = document.getElementById('scoreVal');
+  var highEl  = document.getElementById('highVal');
+  var overlay = document.getElementById('overlay');
+  var nameInput    = document.getElementById('nameInput');
+  var playerNameTag = document.getElementById('playerNameTag');
+
+  var W=800, H=400, GROUND=340, GRAVITY=0.6, JUMP=-14, BR=22, BX=100;
+  var ball, obs, parts, score, speed, frame, running, rafId;
+
+  // Load leaderboard from localStorage safely
+  var leaderboard = [];
+  try {
+    var saved = localStorage.getItem('ballrunner_scores');
+    if(saved) leaderboard = JSON.parse(saved);
+  } catch(e) { leaderboard = []; }
+
+  var currentPlayer = 'Player';
+  var sessionBest = 0;
+
+  function saveLeaderboard() {
+    try { localStorage.setItem('ballrunner_scores', JSON.stringify(leaderboard)); } catch(e){}
+  }
+
+  function addScore(name, s) {
+    leaderboard.push({name: name, score: s});
+    leaderboard.sort(function(a,b){ return b.score - a.score; });
+    if(leaderboard.length > 10) leaderboard = leaderboard.slice(0,10);
+    saveLeaderboard();
+  }
+
+  function getPersonalBest(name) {
+    var best = 0;
+    for(var i=0;i<leaderboard.length;i++){
+      if(leaderboard[i].name.toLowerCase()===name.toLowerCase()){
+        if(leaderboard[i].score > best) best = leaderboard[i].score;
+      }
+    }
+    return best;
+  }
+
+  function skyColor() {
+    var s = score > 0 ? score : 0;
+    var t = s/500; if(t>1) t=1;
+    var r=Math.round(30+t*80), g=Math.round(80+t*20), b=Math.round(180-t*100);
+    return 'rgb('+r+','+g+','+b+')';
+  }
+
+  function init() {
+    ball    = {x:BX, y:GROUND-BR, vy:0, jumps:0, trail:[]};
+    obs     = [];
+    parts   = [];
+    score   = 0;
+    speed   = 4;
+    frame   = 0;
+    running = true;
+  }
+
+  function jump() {
+    if(!running) return;
+    if(ball.jumps < 2){
+      ball.vy = JUMP;
+      ball.jumps++;
+      for(var i=0;i<10;i++){
+        parts.push({
+          x:ball.x, y:ball.y+BR,
+          vx:(Math.random()-0.5)*4,
+          vy:Math.random()*3+1,
+          a:1, r:Math.random()*4+2,
+          c:'hsl('+(Math.random()*60+180)+',90%,70%)'
+        });
+      }
+    }
+  }
+
+  function spawnObs() {
+    obs.push({x:W+30, w:20+Math.random()*16, h:40+Math.random()*35});
+  }
+
+  function hits(o) {
+    var bL=ball.x-BR+5, bR=ball.x+BR-5;
+    var bT=ball.y-BR+5, bB=ball.y+BR-5;
+    return bR>o.x && bL<o.x+o.w && bB>GROUND-o.h && bT<GROUND;
+  }
+
+  function drawBG() {
+    var g=ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,skyColor());
+    g.addColorStop(1,'#d0f0ff');
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(255,255,255,0.5)';
+    var cx=[0,200,420,650];
+    for(var i=0;i<cx.length;i++){
+      var x=((cx[i]-frame*0.4)%(W+150)+W+150)%(W+150)-50;
+      var y=45+(i%2)*28;
+      ctx.beginPath();
+      ctx.arc(x,y,24,0,Math.PI*2);
+      ctx.arc(x+26,y-8,19,0,Math.PI*2);
+      ctx.arc(x+48,y,21,0,Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  function drawGround() {
+    var g=ctx.createLinearGradient(0,GROUND,0,H);
+    g.addColorStop(0,'#4caf76'); g.addColorStop(0.2,'#388e57'); g.addColorStop(1,'#2d6e42');
+    ctx.fillStyle=g; ctx.fillRect(0,GROUND,W,H-GROUND);
+    ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=3;
+    ctx.setLineDash([30,30]);
+    ctx.beginPath(); ctx.moveTo(0,GROUND+18); ctx.lineTo(W,GROUND+18); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawBall() {
+    for(var i=0;i<ball.trail.length;i++){
+      var t=ball.trail[i];
+      ctx.globalAlpha=t.a>0?t.a:0;
+      ctx.beginPath(); ctx.arc(t.x,t.y,BR*0.6,0,Math.PI*2);
+      ctx.fillStyle='#6dd5fa'; ctx.fill();
+    }
+    ctx.globalAlpha=1;
+    ctx.fillStyle='rgba(0,0,0,0.15)';
+    ctx.beginPath(); ctx.ellipse(ball.x,GROUND+5,BR*0.8,5,0,0,Math.PI*2); ctx.fill();
+    var bg=ctx.createRadialGradient(ball.x-6,ball.y-6,2,ball.x,ball.y,BR);
+    bg.addColorStop(0,'#ffffff'); bg.addColorStop(0.4,'#6dd5fa'); bg.addColorStop(1,'#1565c0');
+    ctx.beginPath(); ctx.arc(ball.x,ball.y,BR,0,Math.PI*2);
+    ctx.fillStyle=bg; ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(ball.x-7,ball.y-7,6,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.fill();
+  }
+
+  function drawObs() {
+    for(var i=0;i<obs.length;i++){
+      var o=obs[i], top=GROUND-o.h;
+      var og=ctx.createLinearGradient(o.x,top,o.x+o.w,top);
+      og.addColorStop(0,'#27ae60'); og.addColorStop(1,'#1e8449');
+      ctx.fillStyle=og; ctx.beginPath(); ctx.rect(o.x,top,o.w,o.h); ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,0.2)'; ctx.lineWidth=1.5; ctx.stroke();
+    }
+  }
+
+  function drawParts() {
+    for(var i=0;i<parts.length;i++){
+      var p=parts[i];
+      ctx.globalAlpha=p.a>0?p.a:0;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fillStyle=p.c; ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
+
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    drawBG(); drawGround(); drawParts(); drawObs(); drawBall();
+  }
+
+  function buildLeaderboardHTML() {
+    if(leaderboard.length===0) return '<p style="color:#88aacc;font-size:14px;">No scores yet. Be the first!</p>';
+    var medals = ['&#127947;','&#129352;','&#129353;'];
+    var html = '<div class="score-table"><div class="score-table-title">&#127942; Leaderboard</div>';
+    for(var i=0;i<Math.min(leaderboard.length,5);i++){
+      var icon = i<3 ? medals[i] : '#'+(i+1);
+      html += '<div class="score-row">';
+      html += '<span class="rank">'+icon+'</span>';
+      html += '<span class="sname">'+escHtml(leaderboard[i].name)+'</span>';
+      html += '<span class="sval">'+leaderboard[i].score+'</span>';
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function endGame() {
+    running = false;
+    cancelAnimationFrame(rafId);
+
+    if(score > sessionBest) sessionBest = score;
+    addScore(currentPlayer, score);
+    var pb = getPersonalBest(currentPlayer);
+    highEl.textContent = pb;
+
+    for(var i=0;i<30;i++){
+      parts.push({
+        x:ball.x, y:ball.y,
+        vx:(Math.random()-0.5)*10,
+        vy:(Math.random()-0.5)*10,
+        a:1, r:Math.random()*7+3,
+        c:'hsl('+(Math.random()*40)+',100%,60%)'
+      });
+    }
+    draw();
+
+    overlay.innerHTML =
+      '<h1>Game Over!</h1>'+
+      '<div class="final-score">&#128100; '+escHtml(currentPlayer)+' &mdash; '+score+'</div>'+
+      '<div class="best-score">&#127942; Personal Best: '+pb+'</div>'+
+      buildLeaderboardHTML()+
+      '<button class="btn" id="actionBtn">PLAY AGAIN</button>'+
+      '<button class="btn" style="background:linear-gradient(135deg,#6dd5fa,#2980b9);color:#fff;margin-top:-6px;" id="changeNameBtn">Change Name</button>';
+
+    overlay.style.display='flex';
+    document.getElementById('actionBtn').addEventListener('click', function(){
+      overlay.style.display='none';
+      init(); loop();
+    });
+    document.getElementById('changeNameBtn').addEventListener('click', showStartScreen);
+  }
+
+  function update() {
+    frame++; score++;
+    scoreEl.textContent = score;
+    speed = 4 + Math.floor(score/200)*0.5;
+
+    ball.trail.push({x:ball.x, y:ball.y, a:0.35});
+    if(ball.trail.length>7) ball.trail.shift();
+    for(var i=0;i<ball.trail.length;i++) ball.trail[i].a-=0.05;
+
+    ball.vy+=GRAVITY; ball.y+=ball.vy;
+    if(ball.y>=GROUND-BR){ ball.y=GROUND-BR; ball.vy=0; ball.jumps=0; }
+
+    var gap=Math.max(55,130-Math.floor(score/30));
+    if(frame%gap===0) spawnObs();
+
+    for(var j=obs.length-1;j>=0;j--){
+      obs[j].x-=speed;
+      if(obs[j].x+obs[j].w<0){ obs.splice(j,1); continue; }
+      if(hits(obs[j])){ endGame(); return; }
+    }
+
+    for(var k=parts.length-1;k>=0;k--){
+      parts[k].x+=parts[k].vx; parts[k].y+=parts[k].vy; parts[k].a-=0.035;
+      if(parts[k].a<=0) parts.splice(k,1);
+    }
+  }
+
+  function loop() {
+    if(!running){ draw(); return; }
+    update(); draw();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function showStartScreen() {
+    var pb = getPersonalBest(currentPlayer);
+    var lbHtml = buildLeaderboardHTML();
+    overlay.innerHTML =
+      '<h1>&#9917; Ball Runner</h1>'+
+      '<p class="player-name-label">Enter your name to begin</p>'+
+      '<input type="text" id="nameInput" maxlength="16" placeholder="Your name..." autocomplete="off" style="padding:10px 18px;font-size:18px;border-radius:30px;border:2px solid #6dd5fa;background:rgba(255,255,255,0.1);color:#fff;outline:none;text-align:center;width:220px;letter-spacing:1px;"/>'+
+      lbHtml+
+      '<p style="font-size:13px;color:#88aacc;">Space / Up Arrow / Tap to jump &nbsp;|&nbsp; Double jump</p>'+
+      '<button class="btn" id="actionBtn">PLAY</button>';
+    overlay.style.display='flex';
+
+    var ni = document.getElementById('nameInput');
+    ni.value = currentPlayer !== 'Player' ? currentPlayer : '';
+    ni.focus();
+    ni.addEventListener('keydown', function(e){
+      if(e.key==='Enter') startGame();
+    });
+    document.getElementById('actionBtn').addEventListener('click', startGame);
+  }
+
+  function startGame() {
+    var ni = document.getElementById('nameInput');
+    var name = ni ? ni.value.trim() : '';
+    if(!name) name = 'Player';
+    currentPlayer = name;
+    playerNameTag.textContent = name;
+    var pb = getPersonalBest(name);
+    highEl.textContent = pb;
+    overlay.style.display='none';
+    init(); loop();
+  }
+
+  document.addEventListener('keydown',function(e){
+    if(e.code==='Space'||e.code==='ArrowUp'){ e.preventDefault(); jump(); }
+  });
+  canvas.addEventListener('touchstart',function(e){ e.preventDefault(); jump(); },{passive:false});
+  canvas.addEventListener('mousedown',function(){ jump(); });
+
+  // Safe initial state
+  ball=  {x:BX, y:GROUND-BR, vy:0, jumps:0, trail:[]};
+  obs=   [];
+  parts= [];
+  score= 0;
+  frame= 0;
+  draw();
+  showStartScreen();
+})();
+</script>
+</body>
+</html>
